@@ -5,128 +5,141 @@ description: Use when media libraries have wrong, missing, mixed-language, misma
 
 # Curating Media Metadata
 
-## Overview
+## What This Skill Is
 
-Build metadata as an auditable pipeline: discover the local media structure, map it to trustworthy sources, let the agent generate candidates, get human review where uncertain, then write standard sidecars that media tools can ingest.
+一个 **Agent 驱动的半自动刮削器**，专门对付常规刮削器搞不定的疑难杂症媒体目录。
 
-## Core Rule
+常规刮削器（TMM/Plex 自带）刮烂了 → Agent 理解文件结构 → 生成候选映射 → 人审核拍板 → 写入标准 NFO sidecar。
 
-Treat filenames and media files as source-of-truth unless the user explicitly authorizes renaming. Never delete, move, or rename video/subtitle files during metadata work. Prefer sidecar outputs: CSV, HTML review pages, cache files, `.nfo`, and backups.
+**前置条件**：媒体文件已存在且结构已知；文件命名遵循可解析模式（不要求完美）；用户有可信的在线元数据源。
 
-## Quick Reference
+**不是**：常规刮削器替代品；媒体重命名/移动工具；通用数据查询工具。
 
-| Situation | Action |
-| --- | --- |
-| Files parse oddly | Inspect filenames and count structure before searching online |
-| Source order conflicts with files | Keep local grouping/order authoritative |
-| Match is uncertain | Generate CSV/HTML review before writing NFO |
-| User corrects rows | Store overrides durably in script/data |
-| TMM/Plex ignores NFO | Validate XML, timestamps, agent/cache/locked fields, and rescan strategy |
-| Subtitles or seed paths depend on names | Do not rename media |
+## Hard Rules
 
-## Content Source Policy
+### 绝对禁止
 
-Make source trust explicit before generating final NFO. Title and summary are separate fields and may use different trust ladders.
+| # | 规则 |
+|---|---|
+| H1 | 不重命名、不移动、不删除媒体文件和字幕文件 |
+| H2 | 不在审核关卡通过前写最终 NFO |
+| H3 | 不把在线源顺序当作权威来改写本地文件分组 |
+| H4 | 不基于聊天中临时修正写 NFO — 修正必须存入 CSV/JSON/替换表后才可重现 |
 
-| Field | Trust order |
-| --- | --- |
-| Structural order | Local files, existing user-approved mapping, durable override table, then online source order |
-| Show title | User preference, local/TMM existing canonical title, official Chinese title source, then translated source title |
-| Episode title | User correction, official Chinese episode/story title, source title translated and normalized, then local filename-derived fallback |
-| Summary/plot | User correction, Chinese source summary, English source summary translated and normalized, then neutral `本集包含...` fallback |
-| IDs and dates | TMM/Plex-readable stable IDs from selected source, then blank only if unknown and non-critical |
+### 强制行为
 
-Never silently mix incompatible source structures. If titles come from a split-story source but files are merged, document the merge in the mapping and combine titles/summaries according to local files.
+| # | 规则 |
+|---|---|
+| M1 | 步 2 必须对比至少两个在线源后才能下结构判断 |
+| M2 | 每条映射记录 `match_method` 和 `match_score`，不能事后编造 |
+| M3 | `needs_review=true` 的行数 > 0 时必须生成 HTML 审核页 |
+| M4 | 写 NFO 前先备份已有 .nfo（排除之前的备份目录） |
+| M5 | 写 NFO 后 XML 解析验证并统计根标签数 |
+| M6 | 修正数据必须持久化到文件（CSV/JSON/替换表），确保可重跑 |
 
-## Responsibility Split
+### Agent 行为约束
 
-| Owner | Responsibilities |
-| --- | --- |
-| Fixed scripts | Enumerate files, parse structural episode tokens, count media/NFO, cache source responses, compute match scores, generate CSV/HTML review artifacts, apply approved overrides, write sidecar files, back up existing NFO, validate XML and counts |
-| AI agent | Choose candidate sources, reason about source-order conflicts, design matching heuristics for the specific library, generate titles/summaries/translations, normalize names, flag uncertainty, explain TMM/Plex behavior, adapt scripts to the library |
-| Human reviewer | Approve ambiguous mappings, correct titles/summaries, decide preferred translation names, authorize final writes, authorize any rename/delete/move if ever needed |
-
-Keep deterministic work in scripts once a pattern appears more than once. Keep judgment-heavy choices in the agent, but make the agent's choices visible in review artifacts.
-
-## HTML Review Gate
-
-The HTML review page is a first-class artifact, not optional decoration. Use it whenever more than a trivial number of rows are generated or when any mapping is uncertain.
-
-The review page should show, at minimum:
-
-- Local path, season/episode, and parsed local title.
-- Expected source item and selected source item.
-- Match score, match rule, and uncertainty flag.
-- Generated title and generated summary.
-- Source title/summary snippets for comparison.
-- Editable or clearly recordable correction fields, with corrections saved to CSV/JSON/script data before final writing.
-
-Do not write final NFO from memory or chat-only corrections. Convert human decisions into a durable correction file or override table, rerun generation, and archive the reviewed output.
+| # | 规则 |
+|---|---|
+| C1 | 匹配搜索范围不超过预期位置 ±3 集 |
+| C2 | 批量偏离预期时回退到步 2 重新判断结构，不硬推 |
+| C3 | 不确定的匹配宁可标记 `needs_review` 也不强行写入 |
+| C4 | 源标题与生成标题分别记录，不覆盖原始数据 |
+| C5 | 翻译后全文扫描替换表，确认无残留罗马字名 |
 
 ## Workflow
 
-1. **Discover the library shape**
-   - List the target folder, season folders, video files, existing `.nfo`, subtitles, and hidden/archive folders.
-   - Count files by type and by season. Detect confusing title numbers such as `1x18` inside an episode title.
-   - Infer parser rules from actual video names, not from online databases first.
+### 1. 扫描目录结构
 
-2. **Identify metadata structure**
-   - Determine whether files are movie, TV aired order, DVD order, absolute order, specials, split segments, or merged stories.
-   - Compare local episode count and grouping with likely sources: TheTVDB, TMDB, AniDB, Fandom/wiki pages, local subtitles, and existing TMM/Plex data.
-   - Use the local media structure as the final ordering authority. Online sources are evidence, not the boss.
+遍历目标文件夹，列出所有媒体文件（按季/集分组）、已有 .nfo、字幕文件。从实际文件名推断解析规则（不是从在线数据库反推）。输出文件清单 + 解析出的季/集映射。
 
-3. **Build a candidate mapping**
-   - Search or scrape source metadata only as needed. Cache raw responses.
-   - Match only within a narrow neighborhood around the local expected episode/global index unless the filename strongly proves a swap.
-   - Record: local path, season/episode, local title, expected source item, matched source item, match score, source title, generated title, generated summary, and review flag.
+### 2. 确定元数据结构（Agent 密集）
 
-4. **Generate an audit artifact**
-   - Produce a CSV for data safety and an HTML review page as the default correction interface when there are swaps, low scores, missing summaries, merged/split episodes, or uncertain source conflicts.
-   - Do not write final NFO until the user has reviewed uncertain rows or explicitly accepts the proposed mapping.
+1. 列出本地结构特征：总集数、每季集数、命名模式（S01E01 / 1x01 / #001 / EP01）、特殊文件夹（Specials/OVA）。
+2. 搜索至少两个在线源（TVDB/TMDB/AniDB/wiki），拉取 aired order、DVD order、absolute order、特别篇列表。
+3. 逐季对比集数，判断本地文件对应哪个源的哪个顺序。明确写出判断依据。
+4. 不一致时本地文件为最终权威。判断不了则标记 `structure_uncertain`。
 
-5. **Agent-assisted metadata generation**
-   - Apply the content source policy for every title and summary.
-   - Normalize recurring names to the user's preferred official translations. Keep a replacement table and verify no old romanized names remain.
+需输出：选定的源 + 顺序类型 + 依据 + 不一致清单。
 
-6. **Write standard sidecar files**
-   - Back up existing `.nfo` first, excluding previous backup/archive directories from the new backup.
-   - Write:
-     - `tvshow.nfo` in the show root for TV shows.
-     - `<episode filename>.nfo` next to each episode file.
-     - Optional `season.nfo` in season folders when TMM/Plex workflows benefit from it.
-   - Standardize XML roots and critical fields so scanners can ingest them: `<tvshow>` for show, `<season>` for season, `<episodedetails>` for episodes; non-empty `title`, `year` when known, `season`, `episode`, `plot`, and stable IDs where available.
-   - Preserve existing episode `fileinfo` blocks when rewriting NFO so media stream details are not lost.
+### 3. 构建候选映射（Agent 密集）
 
-7. **Validate before claiming success**
-   - Parse every written `.nfo` as XML.
-   - Count `tvshow`, `season`, and `episodedetails` roots.
-   - Verify media file counts did not change.
-   - Spot-check user-specified episodes and known problematic swaps.
-   - Compare timestamps and file headers to confirm whether TMM, Codex, or another tool last rewrote a file.
+以步 2 确定的源顺序为基准，逐文件匹配。默认本地顺序 = 源顺序。
 
-8. **Hand off to TMM/Plex safely**
-   - In TMM, ensure the data source is the parent library folder, not the show folder itself.
-   - If TMM does not ingest updated NFO, remove the show from TMM's database without deleting files, then rescan the data source.
-   - In Plex, avoid repeated refresh clicks while a refresh is still running. Stop/cancel current activity or restart Plex Media Server if the queue appears stuck.
-   - If Plex partially updates, check locked fields, stale agent cache, matching state, and whether the server is reading the intended NFO agent.
+每条映射记录：
+
+| 字段 | 说明 |
+|---|---|
+| `local_path` | 文件路径 |
+| `local_season`, `local_episode` | 从文件名解析 |
+| `expected_source_item` | 按顺序假设应匹配的源条目 |
+| `matched_source_item` | Agent 实际匹配的源条目 |
+| `match_score` | 0-1 |
+| `match_method` | `order_assumed` / `title_fuzzy` / `title_exact` / `manual` |
+| `source_title` | 源标题原文 |
+| `source_summary` | 源简介原文 |
+| `generated_title` | Agent 生成的中文标题 |
+| `generated_summary` | Agent 生成的中文简介 |
+| `needs_review` | bool |
+
+`needs_review=true` 触发条件：`match_score<0.7`、`match_method!=order_assumed`、源缺标题/简介、拆分/合并、语言不一致无法自动翻译。
+
+### 4. 生成审核产物
+
+- **CSV**：步 3 所有映射字段，一行一条。
+- **HTML 审核页**：`needs_review=true` 时必生成。提供搜索/筛选、本地 vs 源对比、修正字段可记录、导出 CSV/JSON。行 ID 使用 `season+episode+local_path`。
+
+### 5. Agent 生成元数据
+
+按内容来源策略（见下）逐字段填充。归一化人名/术语为用户偏好翻译，写入替换表后全文扫描复查。
+
+### 6. 写入 NFO
+
+- 先备份已有 .nfo（排除之前的备份目录）
+- 写入 `tvshow.nfo` + 每集 `.nfo` + 可选 `season.nfo`
+- 保留已有 `<fileinfo>` 块
+- NFO 格式参考：`references/nfo-spec.md`
+
+### 7. 验证
+
+- 逐个 XML 解析，统计 `<tvshow>` / `<episodedetails>` / `<season>` 数量
+- 确认媒体文件数量未变
+- 抽查指定集数和已知问题集
+- 对比文件头和时间戳判断最后改写工具
+
+### 8. 交付 TMM/Plex
+
+- **TMM**：数据源设为父级文件夹。如不摄入：从 TMM 库移除 → 重新扫描。
+- **Plex**：PMS ≥ 1.43.1 使用 "Plex NFO Series" 代理（原生 NFO 支持）。不重复点刷新。检查锁定字段、agent 缓存。
+
+## Content Source Policy
+
+每个字段按优先级取源，高优先级可用则不用低优先级。
+
+| 字段 | 优先级（高 → 低） |
+|---|---|
+| 结构/顺序 | 本地文件 → 用户已审批映射 → 持久化覆盖表 → 在线源顺序 |
+| 剧名 | 用户偏好 → 本地/TMM 已有标题 → 官方中文源标题 → 翻译源标题 |
+| 集标题 | 用户修正 → 官方中文集标题 → 源标题翻译归一化 → 文件名推断兜底 |
+| 简介 | 用户修正 → 中文源简介 → 英文源简介翻译归一化 → `本集包含...` 兜底 |
+| ID/日期 | TMM/Plex 可读的稳定 ID（选定源） → 确实未知才留空 |
+
+**混合源规则**：不静默混用不兼容的源结构。拆分/合并时在映射中记录合并方式，标题/简介据此组合。
 
 ## Output Pattern
 
-For substantial jobs, create these artifacts in the workspace or beside the target media:
+| 产物 | 说明 |
+|---|---|
+| `*_preprocess.csv` | 写入 NFO 前的完整候选映射 |
+| `*_review.html` | 审核页面（不确定行） |
+| `*_after_rewrite.csv` | 最终写入的映射 |
+| `.metadata_archive/` | 旧 NFO 备份 + 最终脚本 |
 
-- `*_preprocess.csv`: full proposed mapping before final writing.
-- `*_review.html`: human-friendly audit page for uncertain rows.
-- `*_after_rewrite.csv`: mapping actually used for final NFO.
-- `.metadata_archive/` or a project-specific hidden archive folder containing previous NFO and final scripts.
+## Reference Files (按需读取)
 
-## When To Read More
-
-Read [references/nfo-practices.md](references/nfo-practices.md) when implementing or debugging exact NFO compatibility, TMM/Plex refresh behavior, or validation commands.
-
-## Common Mistakes
-
-- Treating online scraper order as truth when local files are merged/split differently.
-- Letting episode-looking text inside a title override the actual structural episode token.
-- Writing final NFO before the user reviews low-confidence matches.
-- Repeatedly refreshing Plex while previous metadata jobs are still queued.
-- Backing up recursively into previous backup folders and multiplying stale NFO.
+| 文件 | 何时读 |
+|---|---|
+| `references/nfo-spec.md` | 步 6 写 NFO — XML 模板、字段表、兼容性备忘、`<fileinfo>` 保留 |
+| `references/verification.md` | 步 7/8 — 验证命令、TMM/Plex 排错 |
+| `references/source-matching.md` | 步 2/3 — 匹配算法、`match_method` 定义、多源对比 |
+| `references/user-correction-format.md` | 步 4/5 — CSV 覆盖表格式、JSON 替换表、审核页导出 |
