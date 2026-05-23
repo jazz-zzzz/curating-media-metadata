@@ -1,0 +1,7 @@
+interface:
+  display_name: "Curating Media Metadata"
+  short_description: "Auditable media metadata curation"
+  default_prompt: "Use $curating-media-metadata to inspect this media folder, build a reviewable metadata mapping, and write compatible sidecar metadata."
+
+policy:
+  allow_implicit_invocation: true
