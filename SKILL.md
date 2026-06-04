@@ -3,7 +3,7 @@ name: fix-my-show
 description: Use when media libraries have wrong, missing, mixed-language, mismatched, partially refreshed, or scraper-conflicted metadata; or when file structure needs auditing against TVDB/TMDB — episodes out of order, Specials misnumbered, files not recognized by scrapers, BD rips unsorted, aired vs DVD order confusion. Covers Plex, tinyMediaManager, Kodi, Jellyfin, Emby, NFO sidecars, anime, TV episodes, movies, seasons, and human-reviewed scraping corrections.
 ---
 
-# Curating Media Metadata
+# fix-my-show
 
 ## What This Skill Is
 
@@ -13,9 +13,9 @@ description: Use when media libraries have wrong, missing, mixed-language, misma
 
 **工作流 2：元数据修复与翻译** — 替换已有 NFO 中错误/空白的标题和简介，翻译为目标语言，Plex API / NFO 双通道交付。
 
-**前置条件**：媒体文件已存在；用户有可信的在线元数据源。
-
 **不是**：通用文件管理器；批量重命名工具；TMM/Plex 替代品（是和它们协作的修复工具）。
+
+**不适用**：从头搭建新库（TMM/Plex 内置刮削器更合适）；纯文件批量重命名（用 SubRenamer/Advanced Renamer）；网络翻墙/VPN 问题导致刮削失败的。
 
 ## Hard Rules
 
@@ -32,7 +32,7 @@ description: Use when media libraries have wrong, missing, mixed-language, misma
 
 | # | 规则 |
 |---|---|
-| M1 | 工作流 A 必须对比至少两个在线源（TVDB + TMDB）后才能下结构判断 |
+| M1 | 结构审计必须对比至少两个在线源（TVDB + TMDB）后才能下判断 |
 | M2 | 每条映射记录 `match_method` 和 `match_score`，不能事后编造 |
 | M3 | `needs_review=true` 的行数 > 0 时必须生成 HTML 审核页 |
 | M4 | 写 NFO 前先备份已有 .nfo（排除之前的备份目录） |
@@ -221,13 +221,24 @@ TMM/Plex 已生成 NFO 但内容是错误语言的场景。**只替换内容字�
 
 **混合源规则**：
 - 不静默混用不兼容的源结构。拆分/合并时在映射中记录合并方式，标题/简介据此组合。
-- **标题可以来自维基/moegirl 等中文百科，简介可以来自日语 NFO（BD 官方）——允许标题和简介来自不同语言源，关键是用步 5 术语表保证一致性。**
+- **标题可以来自维基/moegirl 等中文百科，简介可以来自日语 NFO（BD 官方）——允许标题和简介来自不同语言源，关键是用步 B5 术语表保证一致性。**
 - 日语源简介通常比英文源更准确（动画 BD 官方数据），优先于英文源。
 
 **术语一致性**：
-- 翻译前必建术语表（步 5），逐字段翻译时对照术语表。
+- 翻译前必建术语表（步 B5），逐字段翻译时对照术语表。
 - 术语表包含：角色名（日/中/罗马字）、季标题、地名、口头禅。
 - C5：翻译后全文扫描替换表，确认无残留罗马字名。
+
+## Common Mistakes
+
+| 错误 | 后果 | 正确做法 |
+|------|------|---------|
+| 不建术语表直接翻译 | 同一角色在 S01 和 S03 名字不同 | 步 B5 先建表，用户确认后再翻 |
+| Plex API 写入不加 `locked=1` | 刷新元数据后被在线源覆盖 | PUT 时必须带 `title.locked=1&summary.locked=1` |
+| NFO 编辑时重新生成整个文件 | `<uniqueid>` `<actor>` 等结构数据丢失 | 模式 A 只替换 title/plot 节点 |
+| 集数对不上就硬推在线源顺序 | 本地 Specials 可能被错误重新编号 | 出缺口报告让用户决定，不自行修改 |
+| 中文简介为空就保留日文不翻译 | 用户看到中英日三语混杂 | 日语简介翻译为中文，术语表保一致性 |
+| PowerShell 中文引号 `""` 放在双引号字符串中 | 语法错误 | 写脚本文件用 `@''@` here-string |
 
 ## Output Pattern
 
