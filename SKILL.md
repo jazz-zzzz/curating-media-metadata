@@ -1,5 +1,5 @@
 ---
-name: make-my-nfo
+name: fix-my-show
 description: Use when media libraries have wrong, missing, mixed-language, mismatched, partially refreshed, or scraper-conflicted metadata for Plex, tinyMediaManager, Kodi, Jellyfin, Emby, NFO sidecars, anime, TV episodes, movies, seasons, aired order, DVD order, merged stories, or human-reviewed scraping corrections.
 ---
 
