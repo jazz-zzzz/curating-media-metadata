@@ -7,13 +7,15 @@ description: Use when media libraries have wrong, missing, mixed-language, misma
 
 ## What This Skill Is
 
-一个 **Agent 驱动的半自动刮削器**，专门对付常规刮削器搞不定的疑难杂症媒体目录。
+一个 **Agent 驱动的半自动刮削器**，涵盖两大工作流：
 
-常规刮削器（TMM/Plex 自带）刮烂了 → Agent 理解文件结构 → 生成候选映射 → 人审核拍板 → 写入标准 NFO sidecar。
+**工作流 1：结构审计与重组** — 本地文件 vs TVDB/TMDB 对账，找出缺失/多余/错位/未识别的文件，出修复方案。
 
-**前置条件**：媒体文件已存在且结构已知；文件命名遵循可解析模式（不要求完美）；用户有可信的在线元数据源。
+**工作流 2：元数据修复与翻译** — 替换已有 NFO 中错误/空白的标题和简介，翻译为目标语言，Plex API / NFO 双通道交付。
 
-**不是**：常规刮削器替代品；媒体重命名/移动工具；通用数据查询工具。
+**前置条件**：媒体文件已存在；用户有可信的在线元数据源。
+
+**不是**：通用文件管理器；批量重命名工具；TMM/Plex 替代品（是和它们协作的修复工具）。
 
 ## Hard Rules
 
@@ -21,16 +23,16 @@ description: Use when media libraries have wrong, missing, mixed-language, misma
 
 | # | 规则 |
 |---|---|
-| H1 | 不重命名、不移动、不删除媒体文件和字幕文件 |
+| H1 | 不重命名、不移动、不删除媒体文件和字幕文件，**除非**用户审批了结构修复方案（见工作流 A 步 A4）且操作前备份 |
 | H2 | 不在审核关卡通过前写最终 NFO |
-| H3 | 不把在线源顺序当作权威来改写本地文件分组 |
+| H3 | 不把在线源顺序当作权威来改写本地文件分组——但协助用户发现本地 vs 源的差异，让用户决定是否修正 |
 | H4 | 不基于聊天中临时修正写 NFO — 修正必须存入 CSV/JSON/替换表后才可重现 |
 
 ### 强制行为
 
 | # | 规则 |
 |---|---|
-| M1 | 步 2 必须对比至少两个在线源后才能下结构判断 |
+| M1 | 工作流 A 必须对比至少两个在线源（TVDB + TMDB）后才能下结构判断 |
 | M2 | 每条映射记录 `match_method` 和 `match_score`，不能事后编造 |
 | M3 | `needs_review=true` 的行数 > 0 时必须生成 HTML 审核页 |
 | M4 | 写 NFO 前先备份已有 .nfo（排除之前的备份目录） |
@@ -49,13 +51,54 @@ description: Use when media libraries have wrong, missing, mixed-language, misma
 | C5 | 翻译后全文扫描替换表，确认无残留罗马字名 |
 | C6 | 编辑已有 NFO 时只改内容字段（title/plot/outline），不删除、不重写 `<uniqueid>` `<thumb>` `<actor>` `<fileinfo>` |
 
-## Workflow
+## Workflow A：结构审计与重组
 
-### 1. 扫描目录结构
+当用户说"看看库全不全"、"TVDB 还是 TMDB 排序"、"有些文件没扫进去"时触发此工作流。
+
+### A1. 扫描全量文件
+
+递归列出所有视频文件（.mp4/.mkv/.avi 等），从文件名解析 S/E 编号。同时列出已有 NFO、字幕文件、BD 原盘目录等。
+
+### A2. 拉取在线源集数列表
+
+搜索 TVDB 和 TMDB 的完整集数表（所有季 + Specials + OVA），对比两者的差异点（Special 编号、拆分/合并、DVD order vs Aired order）。明确输出两者的差异清单。
+
+### A3. 对账：本地 vs 在线源
+
+逐季、逐 Special 对比：
+
+| 检查项 | 说明 |
+|--------|------|
+| 集数匹配 | 本地每季的 mp4 数量 vs 源预期集数 |
+| 编号连续 | 检查 SxxExx 是否有跳号 |
+| 未识别文件 | 有视频但无 NFO（tmm 没扫到） |
+| 孤立 NFO | 有 NFO 但无对应视频 |
+| 命名异常 | 文件扩展名截断、非标准前缀、路径过长 |
+| 目录名异常 | Specials 目录名含误导性标签 |
+
+输出 **缺口报告**：缺失集、多余文件、需修复项，逐条标注原因和建议操作。
+
+### A4. 出修复方案，用户审批后执行
+
+输出一个表格：
+
+| 文件 | 问题 | 建议操作 | 审批 |
+|------|------|---------|------|
+| `S03/第07話...mp4.mp` | 扩展名截断 | 重命名为 `S03E07.mp4` | ⬜ |
+
+用户审批后，执行文件重命名/移动（有 H1 豁免）。修复后建议用户跑 tmm 重扫。
+
+---
+
+## Workflow B：元数据修复与翻译
+
+当用户说"NFO 是英文的改成中文"、"简介缺失"、"标题不对"时触发此工作流。
+
+### B1. 扫描目录结构（同 A1）
 
 遍历目标文件夹，列出所有媒体文件（按季/集分组）、已有 .nfo、字幕文件。从实际文件名推断解析规则（不是从在线数据库反推）。输出文件清单 + 解析出的季/集映射。
 
-### 2. 确定元数据结构（Agent 密集）
+### B2. 确定元数据结构（Agent 密集）
 
 1. 列出本地结构特征：总集数、每季集数、命名模式（S01E01 / 1x01 / #001 / EP01）、特殊文件夹（Specials/OVA）。
 2. 搜索至少两个在线源（TVDB/TMDB/AniDB/wiki），拉取 aired order、DVD order、absolute order、特别篇列表。
@@ -64,9 +107,9 @@ description: Use when media libraries have wrong, missing, mixed-language, misma
 
 需输出：选定的源 + 顺序类型 + 依据 + 不一致清单。
 
-### 3. 构建候选映射（Agent 密集）
+### B3. 构建候选映射（Agent 密集）
 
-以步 2 确定的源顺序为基准，逐文件匹配。默认本地顺序 = 源顺序。
+以步 B2 确定的源顺序为基准，逐文件匹配。默认本地顺序 = 源顺序。
 
 每条映射记录：
 
@@ -86,12 +129,12 @@ description: Use when media libraries have wrong, missing, mixed-language, misma
 
 `needs_review=true` 触发条件：`match_score<0.7`、`match_method!=order_assumed`、源缺标题/简介、拆分/合并、语言不一致无法自动翻译。
 
-### 4. 生成审核产物
+### B4. 生成审核产物
 
-- **CSV**：步 3 所有映射字段，一行一条。
+- **CSV**：步 B3 所有映射字段，一行一条。
 - **HTML 审核页**：`needs_review=true` 时必生成。提供搜索/筛选、本地 vs 源对比、修正字段可记录、导出 CSV/JSON。行 ID 使用 `season+episode+local_path`。
 
-### 5. 建立术语表（翻译前必做）
+### B5. 建立术语表（翻译前必做）
 
 生成非源语言元数据前，必须先建术语对照表并经用户确认。涵盖：
 
@@ -102,11 +145,11 @@ description: Use when media libraries have wrong, missing, mixed-language, misma
 
 输出格式：表格（日语原文 | 中文译名 | 罗马字 | 备注）。用户审核后才进入翻译。参考本文档 [Content Source Policy](#content-source-policy) 中关于术语一致性的规则。
 
-### 6. Agent 生成元数据
+### B6. Agent 生成元数据
 
-按内容来源策略（见下）逐字段填充。使用步 5 确认的术语表进行翻译，确保人地名全库一致。写入替换表后全文扫描复查。
+按内容来源策略（见下）逐字段填充。使用步 B5 确认的术语表进行翻译，确保人地名全库一致。写入替换表后全文扫描复查。
 
-### 7. 写入 NFO
+### B7. 写入 NFO
 
 **两种模式**：
 
@@ -126,14 +169,14 @@ TMM/Plex 已生成 NFO 但内容是错误语言的场景。**只替换内容字�
 
 两种模式都必须遵循 M4（备份）、M5（XML 验证）。
 
-### 8. 验证
+### B8. 验证
 
 - 逐个 XML 解析，统计 `<tvshow>` / `<episodedetails>` / `<season>` 数量
 - 确认媒体文件数量未变
 - 抽查指定集数和已知问题集
 - 对比文件头和时间戳判断最后改写工具
 
-### 9. 交付
+### B9. 交付
 
 #### TMM
 
@@ -199,8 +242,8 @@ TMM/Plex 已生成 NFO 但内容是错误语言的场景。**只替换内容字�
 
 | 文件 | 何时读 |
 |---|---|
-| `references/nfo-spec.md` | 步 7 写 NFO — XML 模板、字段表、兼容性备忘、`<fileinfo>` 保留 |
-| `references/verification.md` | 步 8/9 — 验证命令、TMM/Plex 排错 |
-| `references/source-matching.md` | 步 2/3 — 匹配算法、`match_method` 定义、多源对比 |
-| `references/user-correction-format.md` | 步 4/5 — CSV 覆盖表格式、JSON 替换表、审核页导出 |
-| `references/plex-api.md` | 步 9 方式 B — Plex Token 获取、端点、field locking、完整脚本模板 |
+| `references/nfo-spec.md` | 步 B7 写 NFO — XML 模板、字段表、兼容性备忘、`<fileinfo>` 保留 |
+| `references/verification.md` | 步 B8/B9 — 验证命令、TMM/Plex 排错 |
+| `references/source-matching.md` | 步 B2/B3 — 匹配算法、`match_method` 定义、多源对比 |
+| `references/user-correction-format.md` | 步 B4/B5 — CSV 覆盖表格式、JSON 替换表、审核页导出 |
+| `references/plex-api.md` | 步 B9 方式 B — Plex Token 获取、端点、field locking、完整脚本模板 |
