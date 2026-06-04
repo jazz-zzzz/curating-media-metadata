@@ -41,11 +41,13 @@ description: Use when media libraries have wrong, missing, mixed-language, misma
 
 | # | 规则 |
 |---|---|
+| C0 | **用户指令不明确时必须询问，不自行假设。** 覆盖范围包括但不限于：目标语言、译名偏好、NFO 写入模式（编辑/生成）、Plex 交付方式（NFO/API）、源优先级。不可替用户做决定。 |
 | C1 | 匹配搜索范围不超过预期位置 ±3 集 |
 | C2 | 批量偏离预期时回退到步 2 重新判断结构，不硬推 |
 | C3 | 不确定的匹配宁可标记 `needs_review` 也不强行写入 |
 | C4 | 源标题与生成标题分别记录，不覆盖原始数据 |
 | C5 | 翻译后全文扫描替换表，确认无残留罗马字名 |
+| C6 | 编辑已有 NFO 时只改内容字段（title/plot/outline），不删除、不重写 `<uniqueid>` `<thumb>` `<actor>` `<fileinfo>` |
 
 ## Workflow
 
@@ -89,28 +91,78 @@ description: Use when media libraries have wrong, missing, mixed-language, misma
 - **CSV**：步 3 所有映射字段，一行一条。
 - **HTML 审核页**：`needs_review=true` 时必生成。提供搜索/筛选、本地 vs 源对比、修正字段可记录、导出 CSV/JSON。行 ID 使用 `season+episode+local_path`。
 
-### 5. Agent 生成元数据
+### 5. 建立术语表（翻译前必做）
 
-按内容来源策略（见下）逐字段填充。归一化人名/术语为用户偏好翻译，写入替换表后全文扫描复查。
+生成非源语言元数据前，必须先建术语对照表并经用户确认。涵盖：
 
-### 6. 写入 NFO
+1. **角色名**：日语 → 中文标准译名 + 罗马字
+2. **季/作品名**：各季标题的中文译名
+3. **关键名词**：地名、口头禅、作品中特有的概念
+4. **命名冲突**：记录与其他版本/翻译可能冲突的译名选择
+
+输出格式：表格（日语原文 | 中文译名 | 罗马字 | 备注）。用户审核后才进入翻译。参考本文档 [Content Source Policy](#content-source-policy) 中关于术语一致性的规则。
+
+### 6. Agent 生成元数据
+
+按内容来源策略（见下）逐字段填充。使用步 5 确认的术语表进行翻译，确保人地名全库一致。写入替换表后全文扫描复查。
+
+### 7. 写入 NFO
+
+**两种模式**：
+
+#### 模式 A：编辑已有 NFO（推荐，TMM 已生成时）
+
+TMM/Plex 已生成 NFO 但内容是错误语言的场景。**只替换内容字段**（`<title>`、`<plot>`、`<outline>`），保留 `<uniqueid>`、`<thumb>`、`<actor>`、`<fileinfo>` 等所有结构元数据。
+
+- 遍历已有 .nfo，XML 解析 → 替换目标节点 → 写回
+- 不改文件名、不重新生成、不碰 `<fileinfo>`
+- PowerShell 注意：使用 `[System.IO.File]::ReadAllText` + `[System.Xml.XmlWriter]` 避免编码丢失
+
+#### 模式 B：全新生成
 
 - 先备份已有 .nfo（排除之前的备份目录）
 - 写入 `tvshow.nfo` + 每集 `.nfo` + 可选 `season.nfo`
-- 保留已有 `<fileinfo>` 块
 - NFO 格式参考：`references/nfo-spec.md`
 
-### 7. 验证
+两种模式都必须遵循 M4（备份）、M5（XML 验证）。
+
+### 8. 验证
 
 - 逐个 XML 解析，统计 `<tvshow>` / `<episodedetails>` / `<season>` 数量
 - 确认媒体文件数量未变
 - 抽查指定集数和已知问题集
 - 对比文件头和时间戳判断最后改写工具
 
-### 8. 交付 TMM/Plex
+### 9. 交付
 
-- **TMM**：数据源设为父级文件夹。如不摄入：从 TMM 库移除 → 重新扫描。
-- **Plex**：PMS ≥ 1.43.1 使用 "Plex NFO Series" 代理（原生 NFO 支持）。不重复点刷新。检查锁定字段、agent 缓存。
+#### TMM
+
+数据源设为父级文件夹。如不摄入：从 TMM 库移除 → 重新扫描。
+
+#### Plex 方式 A：NFO 代理（PMS ≥ 1.43.1）
+
+使用 "Plex NFO Series" 代理（原生 NFO 支持）。不重复点刷新。
+
+#### Plex 方式 B：API 直接写入（推荐，不依赖 NFO 代理）
+
+适用场景：Plex 已从 TVDB/TMDB 在线刮好结构、只需改内容语言时。避免切代理导致的结构丢失。
+
+**步骤**：
+
+1. **发现 Plex Token**：Windows 注册表 `HKCU\Software\Plex, Inc.\Plex Media Server` → `PlexOnlineToken`
+2. **定位 Show Key**：`GET /library/sections/{id}/all` 或 `GET /search?query=xxx` 找到目标剧集的 `ratingKey`
+3. **获取剧集列表**：`GET /library/metadata/{showKey}/allLeaves` → 解析 XML 获取每集的 `ratingKey`、`parentIndex`（季）、`index`（集号）
+4. **PUT 元数据**：`PUT /library/metadata/{ratingKey}?title.value=XXX&title.locked=1&summary.value=XXX&summary.locked=1`
+5. **更新季级**：`GET /library/metadata/{showKey}/children` → 各 Season 的 `ratingKey` → PUT title + summary + lock
+6. **更新剧级**：PUT show 的 `ratingKey` 更新 title + summary + lock
+
+**关键要点**：
+
+- `title.locked=1&summary.locked=1` 是必须的——不加锁 Plex 刷新元数据时会从在线源覆盖
+- URL 编码用 `[Uri]::EscapeDataString()`
+- 请求需要 `X-Plex-Token` 头或 query string 参数
+- 写入后用户刷新 Plex 即可看到中文内容，且不会被覆盖
+- 参考：`references/plex-api.md`
 
 ## Content Source Policy
 
@@ -121,10 +173,18 @@ description: Use when media libraries have wrong, missing, mixed-language, misma
 | 结构/顺序 | 本地文件 → 用户已审批映射 → 持久化覆盖表 → 在线源顺序 |
 | 剧名 | 用户偏好 → 本地/TMM 已有标题 → 官方中文源标题 → 翻译源标题 |
 | 集标题 | 用户修正 → 官方中文集标题 → 源标题翻译归一化 → 文件名推断兜底 |
-| 简介 | 用户修正 → 中文源简介 → 英文源简介翻译归一化 → `本集包含...` 兜底 |
+| 简介 | 用户修正 → 中文源简介 → 日语简介（BD 官方数据）→ 英文源简介翻译归一化 → `本集包含...` 兜底 |
 | ID/日期 | TMM/Plex 可读的稳定 ID（选定源） → 确实未知才留空 |
 
-**混合源规则**：不静默混用不兼容的源结构。拆分/合并时在映射中记录合并方式，标题/简介据此组合。
+**混合源规则**：
+- 不静默混用不兼容的源结构。拆分/合并时在映射中记录合并方式，标题/简介据此组合。
+- **标题可以来自维基/moegirl 等中文百科，简介可以来自日语 NFO（BD 官方）——允许标题和简介来自不同语言源，关键是用步 5 术语表保证一致性。**
+- 日语源简介通常比英文源更准确（动画 BD 官方数据），优先于英文源。
+
+**术语一致性**：
+- 翻译前必建术语表（步 5），逐字段翻译时对照术语表。
+- 术语表包含：角色名（日/中/罗马字）、季标题、地名、口头禅。
+- C5：翻译后全文扫描替换表，确认无残留罗马字名。
 
 ## Output Pattern
 
@@ -139,7 +199,8 @@ description: Use when media libraries have wrong, missing, mixed-language, misma
 
 | 文件 | 何时读 |
 |---|---|
-| `references/nfo-spec.md` | 步 6 写 NFO — XML 模板、字段表、兼容性备忘、`<fileinfo>` 保留 |
-| `references/verification.md` | 步 7/8 — 验证命令、TMM/Plex 排错 |
+| `references/nfo-spec.md` | 步 7 写 NFO — XML 模板、字段表、兼容性备忘、`<fileinfo>` 保留 |
+| `references/verification.md` | 步 8/9 — 验证命令、TMM/Plex 排错 |
 | `references/source-matching.md` | 步 2/3 — 匹配算法、`match_method` 定义、多源对比 |
 | `references/user-correction-format.md` | 步 4/5 — CSV 覆盖表格式、JSON 替换表、审核页导出 |
+| `references/plex-api.md` | 步 9 方式 B — Plex Token 获取、端点、field locking、完整脚本模板 |
