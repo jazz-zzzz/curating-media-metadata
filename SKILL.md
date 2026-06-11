@@ -1,6 +1,6 @@
 ---
 name: fix-my-show
-description: Use when media libraries have wrong, missing, mixed-language, mismatched, partially refreshed, or scraper-conflicted metadata; or when file structure needs auditing against TVDB/TMDB — episodes out of order, Specials misnumbered, files not recognized by scrapers, BD rips unsorted, aired vs DVD order confusion. Covers Plex, tinyMediaManager, Kodi, Jellyfin, Emby, NFO sidecars, anime, TV episodes, movies, seasons, and human-reviewed scraping corrections.
+description: Use when media libraries have wrong, missing, mixed-language, mismatched, partially refreshed, or scraper-conflicted metadata; or when NFO titles/summaries need translation to Chinese or bilingual rewriting from Japanese; or when file structure needs auditing against TVDB/TMDB — episodes out of order, Specials misnumbered, files not recognized by scrapers, BD rips unsorted, aired vs DVD order confusion. Covers Plex, tinyMediaManager, Kodi, Jellyfin, Emby, NFO sidecars, anime, TV episodes, movies, seasons, translate/bilingual NFO, and human-reviewed scraping corrections.
 ---
 
 # fix-my-show
@@ -43,7 +43,7 @@ description: Use when media libraries have wrong, missing, mixed-language, misma
 
 | # | 规则 |
 |---|---|
-| C0 | **用户指令不明确时必须询问，不自行假设。** 覆盖范围包括但不限于：目标语言、译名偏好、NFO 写入模式（编辑/生成）、Plex 交付方式（NFO/API）、源优先级。不可替用户做决定。 |
+| C0 | **用户指令不明确时必须询问，不自行假设。** 覆盖范围包括但不限于：选择工作流 A 还是 B（用户只给路径时必问）、目标语言、译名偏好、NFO 写入模式（编辑/生成）、Plex 交付方式（NFO/API）、源优先级。不可替用户做决定。 |
 | C1 | 匹配搜索范围不超过预期位置 ±3 集 |
 | C2 | 批量偏离预期时回退到步 2 重新判断结构，不硬推 |
 | C3 | 不确定的匹配宁可标记 `needs_review` 也不强行写入 |
@@ -54,6 +54,16 @@ description: Use when media libraries have wrong, missing, mixed-language, misma
 ## Workflow A：结构审计与重组
 
 当用户说"看看库全不全"、"TVDB 还是 TMDB 排序"、"有些文件没扫进去"时触发此工作流。
+
+### A0. 验证刮削器季结构（结构重组前必做）
+
+**在创建/重命名任何季目录之前**，必须验证目标刮削器实际存在的季结构：
+
+1. 搜索 TVDB/TMDB 的剧集页面，**确认每个 Season 是否真实存在**（不是所有源都按官方分季）
+2. 输出 `tvdb_has_season_2: true/false`、`tmdb_has_season_2: true/false`
+3. **TVDB/TMDB 的 anime split-cour 合并策略**：连续编号的 anime 经常被 TVDB/TMDB 合并为单季（所有集在 S01 下），即使官方分为 S01/S02。这是已知策略，不是数据错误
+4. 如果目标刮削器只有单季 → 本地文件也必须按绝对编号（S01E01–E24），不创建 S02 目录
+5. 如果源之间存在分歧 → 出对比表让用户选择用哪个源
 
 ### A1. 扫描全量文件
 
@@ -74,7 +84,7 @@ description: Use when media libraries have wrong, missing, mixed-language, misma
 | 未识别文件 | 有视频但无 NFO（tmm 没扫到） |
 | 孤立 NFO | 有 NFO 但无对应视频 |
 | 命名异常 | 文件扩展名截断、非标准前缀、路径过长 |
-| 目录名异常 | Specials 目录名含误导性标签 |
+| 目录名异常 | Specials 目录名含误导性标签；父目录名含误导性季号/年份（如 `ShowName.S01.2024...` 中的 `S01` 会让 Plex 误判） |
 
 输出 **缺口报告**：缺失集、多余文件、需修复项，逐条标注原因和建议操作。
 
@@ -190,22 +200,11 @@ TMM/Plex 已生成 NFO 但内容是错误语言的场景。**只替换内容字�
 
 适用场景：Plex 已从 TVDB/TMDB 在线刮好结构、只需改内容语言时。避免切代理导致的结构丢失。
 
-**步骤**：
+**核心**：获取 Token → 定位 Show/Season/Episode 的 `ratingKey` → `PUT /library/metadata/{ratingKey}?title.value=...&title.locked=1&summary.value=...&summary.locked=1`。
 
-1. **发现 Plex Token**：Windows 注册表 `HKCU\Software\Plex, Inc.\Plex Media Server` → `PlexOnlineToken`
-2. **定位 Show Key**：`GET /library/sections/{id}/all` 或 `GET /search?query=xxx` 找到目标剧集的 `ratingKey`
-3. **获取剧集列表**：`GET /library/metadata/{showKey}/allLeaves` → 解析 XML 获取每集的 `ratingKey`、`parentIndex`（季）、`index`（集号）
-4. **PUT 元数据**：`PUT /library/metadata/{ratingKey}?title.value=XXX&title.locked=1&summary.value=XXX&summary.locked=1`
-5. **更新季级**：`GET /library/metadata/{showKey}/children` → 各 Season 的 `ratingKey` → PUT title + summary + lock
-6. **更新剧级**：PUT show 的 `ratingKey` 更新 title + summary + lock
+**必须**：带 `locked=1`（否则刷新后被在线源覆盖），URL 编码用 `[Uri]::EscapeDataString()`。
 
-**关键要点**：
-
-- `title.locked=1&summary.locked=1` 是必须的——不加锁 Plex 刷新元数据时会从在线源覆盖
-- URL 编码用 `[Uri]::EscapeDataString()`
-- 请求需要 `X-Plex-Token` 头或 query string 参数
-- 写入后用户刷新 Plex 即可看到中文内容，且不会被覆盖
-- 参考：`references/plex-api.md`
+完整脚本模板和端点参考：`references/plex-api.md`。
 
 ## Content Source Policy
 
@@ -234,6 +233,20 @@ TMM/Plex 已生成 NFO 但内容是错误语言的场景。**只替换内容字�
 - 术语表包含：角色名（日/中/罗马字）、季标题、地名、口头禅。
 - C5：翻译后全文扫描替换表，确认无残留罗马字名。
 
+## Red Flags — STOP 并回到检查点
+
+执行过程中出现以下信号时，暂停当前操作、回退：
+
+| 信号 | 含义 | 回退到 |
+|------|------|--------|
+| 源显示有 S02，但重组后 Plex 刮不到 | TVDB/TMDB 可能合并了 split-cour | 步 A0 |
+| 用户只给了路径没说要做什么 | 工作流未确定 | 询问 C0 |
+| 大部分集的 `match_method` 不是 `order_assumed` | 结构判断可能错误 | 步 B2 |
+| 翻译完后发现同一角色有多个中文名 | 术语表未建或未遵守 | 步 B5 |
+| NFO 写完后 Plex 刷新变回英文 | 未加 `locked=1` | `references/plex-api.md` |
+| "这个看起来明显是对的" | 跳过审核的前兆 | 步 B4 生成 HTML |
+| "我先改这几个，其他的之后再说" | 违反 H4（临时修正未持久化） | 步 B4 写入 CSV |
+
 ## Common Mistakes
 
 | 错误 | 后果 | 正确做法 |
@@ -245,6 +258,7 @@ TMM/Plex 已生成 NFO 但内容是错误语言的场景。**只替换内容字�
 | 中文简介为空就保留日文不翻译 | 用户看到中英日三语混杂 | 日语简介翻译为中文，术语表保一致性 |
 | 用英文简介做翻译源 | 二次翻译失真：「日语→英文→中文」比「日语→中文」多一层信息损失 | 必须用创作第一语言做翻译源（动画=日语），英文仅作辅助理解 |
 | PowerShell 中文引号 `""` 放在双引号字符串中 | 语法错误 | 写脚本文件用 `@''@` here-string |
+| 不验证刮削器季结构就创建 S02 目录 | Plex 刮不到元数据（TVDB/TMDB 可能把 split-cour 合并在 S01） | 步 A0 先输出 `tvdb_has_season_2: true/false` 再决定结构 |
 
 ## Output Pattern
 
