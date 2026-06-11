@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     写入/编辑 NFO 元数据文件。
     覆盖 fix-my-show 工作流 B7。
@@ -16,7 +16,8 @@
 
 .PARAMETER MappingCsv
     B3 产出的映射 CSV 路径。必须列：local_path, season, episode, generated_title, generated_summary。
-    可选列：show_title, original_title, premiered, aired, runtime, genre, studio, poster_url, fanart_url。
+    可选列：show_title, original_title, premiered, aired, runtime, genre, studio, poster_url, fanart_url,
+    episode_uniqueid/source_id/tvdb_episode_id/tmdb_episode_id, uniqueid_type。
 
 .PARAMETER RootPath
     剧集根目录。NFO 写入此目录及其子目录。
@@ -250,6 +251,11 @@ function New-TvshowNfo {
 function New-EpisodeNfo {
     param([string]$Path, [hashtable]$Data)
 
+    $uniqueIdLine = ''
+    if ($Data.EpisodeUniqueId) {
+        $uniqueIdLine = "<uniqueid type=`"$(Escape-Xml $Data.UniqueIdType)`" default=`"true`">$(Escape-Xml $Data.EpisodeUniqueId)</uniqueid>"
+    }
+
     $xml = @"
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <episodedetails>
@@ -259,6 +265,7 @@ function New-EpisodeNfo {
   <season>$($Data.Season)</season>
   <episode>$($Data.Episode)</episode>
   <id />
+  $uniqueIdLine
   <ratings />
   <userrating>0</userrating>
   <plot>$(Escape-Xml $Data.Plot)</plot>
@@ -326,7 +333,11 @@ if (-not (Test-Path -LiteralPath $MappingCsv)) {
     exit 1
 }
 
-$mapping = Import-Csv -LiteralPath $MappingCsv -Encoding UTF8
+$mapping = @(Import-Csv -LiteralPath $MappingCsv -Encoding UTF8)
+if ($mapping.Count -eq 0) {
+    Write-Error "映射 CSV 为空: $MappingCsv"
+    exit 1
+}
 
 # 验证必要列
 $epRequiredCols = @('local_path','season','episode','generated_title','generated_summary')
@@ -350,7 +361,7 @@ $showSeasonSet = @{}
 if ($Mode -eq 'edit') {
     Write-Host "模式: 编辑已有 NFO"
 
-    foreach ($row in $mapping) {
+foreach ($row in $mapping) {
         $localPath = $row.local_path
         if (-not $localPath) { continue }
 
@@ -411,6 +422,12 @@ if ($Mode -eq 'generate') {
 
     # 1. 写 tvshow.nfo
     $tvshowPath = Join-Path $RootPath 'tvshow.nfo'
+    $mappingColumns = $mapping[0].PSObject.Properties.Name
+    $showSummary = if ($mappingColumns -contains 'show_summary') { $mapping[0].show_summary } else { '' }
+    $showPremiered = if ($mappingColumns -contains 'premiered') { $mapping[0].premiered } else { '' }
+    $showPosterUrl = if ($mappingColumns -contains 'poster_url') { $mapping[0].poster_url } else { '' }
+    $showFanartUrl = if ($mappingColumns -contains 'fanart_url') { $mapping[0].fanart_url } else { '' }
+
     $tvshowData = @{
         ShowTitle    = $ShowTitle
         OriginalTitle = $OriginalTitle
@@ -421,10 +438,10 @@ if ($Mode -eq 'generate') {
         Genre        = $Genre
         Studio       = $Studio
         Country      = $Country
-        Plot         = $mapping[0].PSObject.Properties.Name -contains 'show_summary' ? $mapping[0].show_summary : ''
-        Premiered    = $mapping[0].PSObject.Properties.Name -contains 'premiered' ? $mapping[0].premiered : ''
-        PosterUrl    = $mapping[0].PSObject.Properties.Name -contains 'poster_url' ? $mapping[0].poster_url : ''
-        FanartUrl    = $mapping[0].PSObject.Properties.Name -contains 'fanart_url' ? $mapping[0].fanart_url : ''
+        Plot         = $showSummary
+        Premiered    = $showPremiered
+        PosterUrl    = $showPosterUrl
+        FanartUrl    = $showFanartUrl
         SeasonTitles = ''
     }
 
@@ -476,6 +493,20 @@ if ($Mode -eq 'generate') {
 
         $s = $row.season
         $e = $row.episode
+        $rowColumns = $row.PSObject.Properties.Name
+        $episodeUniqueId = ''
+        $episodeUniqueIdType = if ($rowColumns -contains 'uniqueid_type' -and $row.uniqueid_type) { $row.uniqueid_type } else { 'tvdb' }
+        if ($rowColumns -contains 'episode_uniqueid' -and $row.episode_uniqueid) {
+            $episodeUniqueId = $row.episode_uniqueid
+        } elseif ($rowColumns -contains 'source_id' -and $row.source_id) {
+            $episodeUniqueId = $row.source_id
+        } elseif ($rowColumns -contains 'tvdb_episode_id' -and $row.tvdb_episode_id) {
+            $episodeUniqueId = $row.tvdb_episode_id
+            $episodeUniqueIdType = 'tvdb'
+        } elseif ($rowColumns -contains 'tmdb_episode_id' -and $row.tmdb_episode_id) {
+            $episodeUniqueId = $row.tmdb_episode_id
+            $episodeUniqueIdType = 'tmdb'
+        }
         $seasonDir = Join-Path $RootPath "Season $('{0:D2}' -f [int]$s)"
         $mediaBase = [System.IO.Path]::GetFileNameWithoutExtension((Split-Path -Leaf $localPath))
         $epNfoPath = Join-Path $seasonDir "$mediaBase.nfo"
@@ -493,6 +524,8 @@ if ($Mode -eq 'generate') {
             Genre     = $Genre
             Credits   = ''
             Director  = ''
+            EpisodeUniqueId = $episodeUniqueId
+            UniqueIdType    = $episodeUniqueIdType
         }
 
         if (-not $DryRun) {

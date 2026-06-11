@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     生成元数据审核 HTML 页面。
     覆盖 fix-my-show 工作流 B4。
@@ -52,14 +52,18 @@ if (-not (Test-Path -LiteralPath $MappingCsv)) {
     exit 1
 }
 
-$mapping = Import-Csv -LiteralPath $MappingCsv -Encoding UTF8
+$mapping = @(Import-Csv -LiteralPath $MappingCsv -Encoding UTF8)
+if ($mapping.Count -eq 0) {
+    Write-Error "映射 CSV 为空: $MappingCsv"
+    exit 1
+}
 
 # 数据转 JSON（嵌入 HTML）
-$dataJson = $mapping | ConvertTo-Json -Depth 3 -Compress
+$dataJson = @($mapping) | ConvertTo-Json -Depth 3 -Compress
 
 # 列定义
 $columns = $mapping[0].PSObject.Properties.Name
-$colHeaders = $columns -join '","'
+$columnsJson = @($columns) | ConvertTo-Json -Compress
 
 # HTML 标签（转义）
 function Escape-Html { param([string]$Text) if (-not $Text) { return '' }; return $Text.Replace('&','&amp;').Replace('<','&lt;').Replace('>','&gt;').Replace('"','&quot;') }
@@ -153,6 +157,7 @@ tr.needs-review td:first-child::before { content: '⚠ '; color: #ff6b6b; }
 
 <script>
 const RAW = $dataJson;
+const COLS = $columnsJson;
 let modified = {}; // key: rowIndex, value: {generated_title, generated_summary, needs_review}
 
 function init() {
@@ -166,9 +171,8 @@ function init() {
         ' | 匹配方式: ' + Object.entries(methods).map(([k,v]) => k + ': ' + v).join(', ');
 
     // 表头
-    const cols = $('$colHeaders').split(',');
     const thead = document.getElementById('thead');
-    thead.innerHTML = '<tr>' + cols.map(c => '<th>' + c + '</th>').join('') + '</tr>';
+    thead.innerHTML = '<tr>' + COLS.map(c => '<th>' + c + '</th>').join('') + '</tr>';
 
     renderTable();
 }
@@ -200,7 +204,6 @@ function renderTable() {
         rows = rows.filter(r => (r.match_method || '') === filterMethod);
     }
 
-    const cols = '$($columns -join ''","'')'.split(',');
     const tbody = document.getElementById('tbody');
     tbody.innerHTML = rows.map((r,i) => {
         const idx = r._idx;
@@ -209,7 +212,7 @@ function renderTable() {
             (r.needs_review === 'true' || r.needs_review === 'True' || r.needs_review === true);
         const cls = (isReview ? 'needs-review' : '') + (m.generated_title ? ' modified' : '');
 
-        return '<tr class="' + cls + '">' + cols.map(c => {
+        return '<tr class="' + cls + '">' + COLS.map(c => {
             const val = (m[c] !== undefined) ? m[c] : (r[c] || '');
             const display = typeof val === 'string' ? val : JSON.stringify(val);
             const escaped = display.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');

@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     验证 NFO 文件完整性和格式正确性。
     覆盖 fix-my-show 工作流 B8。
@@ -14,7 +14,7 @@
     scan.ps1 输出的 JSON 文件路径。如果提供，则对比媒体文件数 vs NFO 文件数。
 
 .PARAMETER Strict
-    严格模式：检查 <title> 非空、<uniqueid> default=true 存在等 Kodi 必填项。
+    严格模式：检查 <title> 非空；对 tvshow/episodedetails 检查 <uniqueid> default=true。
 
 .EXAMPLE
     .\verify.ps1 -RootPath "\\Nas\share\Anime\Show" -ScanJson "scan_result.json"
@@ -94,7 +94,8 @@ foreach ($nfo in $nfos) {
         $content = [System.IO.File]::ReadAllText($nfo.FullName, [System.Text.Encoding]::UTF8)
         $xml = [xml]$content
         $tag = $xml.DocumentElement.Name
-        $counts[$tag] = ($counts[$tag] -or 0) + 1
+        $currentCount = if ($counts.ContainsKey($tag)) { [int]$counts[$tag] } else { 0 }
+        $counts[$tag] = $currentCount + 1
 
         # Strict 检查
         if ($Strict) {
@@ -104,14 +105,16 @@ foreach ($nfo in $nfos) {
                 $emptyTitle += $nfo.Name
             }
 
-            # uniqueid default=true 检查
-            $uidNodes = $xml.DocumentElement.SelectNodes('uniqueid')
-            $hasDefault = $false
-            foreach ($uid in $uidNodes) {
-                if ($uid.GetAttribute('default') -eq 'true') { $hasDefault = $true; break }
+            # tvshow/episodedetails 需要至少一个 default=true 的 uniqueid；season.nfo 不强制。
+            if ($tag -in @('tvshow','episodedetails')) {
+                $uidNodes = $xml.DocumentElement.SelectNodes('uniqueid')
+                $hasDefault = $false
+                foreach ($uid in $uidNodes) {
+                    if ($uid.GetAttribute('default') -eq 'true') { $hasDefault = $true; break }
+                }
+                if ($hasDefault) { $hasUniqueidDefault++ }
+                else { $warnings += "$($nfo.Name): 缺少 default=true 的 <uniqueid>" }
             }
-            if ($hasDefault) { $hasUniqueidDefault++ }
-            else { $warnings += "$($nfo.Name): 缺少 default=true 的 <uniqueid>" }
         }
 
         # fileinfo 保留检查
@@ -141,7 +144,7 @@ $mediaCount = $null
 if ($ScanJson -and (Test-Path -LiteralPath $ScanJson)) {
     $scanData = Get-Content -LiteralPath $ScanJson -Encoding UTF8 | ConvertFrom-Json
     $mediaCount = $scanData.stats.total_media
-    $epNfoCount = ($counts['episodedetails'] -or 0)
+    $epNfoCount = if ($counts.ContainsKey('episodedetails')) { [int]$counts['episodedetails'] } else { 0 }
     if ($mediaCount -ne $epNfoCount) {
         $warnings += "媒体文件 ($mediaCount) ≠ episode NFO ($epNfoCount)"
     }
@@ -162,9 +165,10 @@ if ($Strict) {
         Write-Host "  空 <title>: $($emptyTitle.Count) 个 — $($emptyTitle -join ', ')" -ForegroundColor Yellow
     }
 }
-if ($mediaCount) {
+if ($null -ne $mediaCount) {
     Write-Host "  媒体文件总数: $mediaCount"
-    Write-Host "  Episode NFO 总数: $($counts['episodedetails'] -or 0)"
+    $epNfoCount = if ($counts.ContainsKey('episodedetails')) { [int]$counts['episodedetails'] } else { 0 }
+    Write-Host "  Episode NFO 总数: $epNfoCount"
 }
 
 if ($bad.Count -gt 0) {

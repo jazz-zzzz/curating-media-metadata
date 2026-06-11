@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     扫描媒体目录，解析季/集结构，检测 NFO 和字幕文件。
     覆盖 fix-my-show 工作流 A1 + B1。
@@ -268,7 +268,7 @@ foreach ($sd in $subDirs) {
             extension        = ''
             season           = $null
             episode          = $null
-            parse_pattern    = null
+            parse_pattern    = $null
             has_nfo          = $false
             nfo_path         = $null
             subtitle_files   = @()

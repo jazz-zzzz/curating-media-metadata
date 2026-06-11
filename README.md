@@ -1,6 +1,6 @@
 # fix-my-show
 
-Plex/tMM/Kodi/Jellyfin 媒体库修整技能——Claude Code Agent 驱动的半自动刮削器。
+Plex/tMM/Kodi/Jellyfin 媒体库修整技能——Agent 驱动的半自动刮削器。
 
 ## 两大工作流
 
@@ -45,6 +45,7 @@ Plex/tMM/Kodi/Jellyfin 媒体库修整技能——Claude Code Agent 驱动的半
 ## 安装
 
 ```bash
-git clone https://github.com/jazz-zzzz/curating-media-metadata.git
-# 然后将目录软链/复制到 ~/.claude/skills/fix-my-show
+git clone https://github.com/jazz-zzzz/fix-my-show.git
+# Codex: 软链/复制到 ~/.agents/skills/fix-my-show
+# Claude Code: 软链/复制到 ~/.claude/skills/fix-my-show
 ```

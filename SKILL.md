@@ -1,6 +1,6 @@
 ---
 name: fix-my-show
-description: Use when media libraries have wrong, missing, mixed-language, mismatched, partially refreshed, or scraper-conflicted metadata; or when NFO titles/summaries need translation to Chinese or bilingual rewriting from Japanese; or when file structure needs auditing against TVDB/TMDB — episodes out of order, Specials misnumbered, files not recognized by scrapers, BD rips unsorted, aired vs DVD order confusion. Covers Plex, tinyMediaManager, Kodi, Jellyfin, Emby, NFO sidecars, anime, TV episodes, movies, seasons, translate/bilingual NFO, and human-reviewed scraping corrections.
+description: Use when Plex, tinyMediaManager, Kodi, Jellyfin, or Emby libraries have wrong, missing, mixed-language, scraper-conflicted metadata, NFO title/plot translation needs, unmatched files, episode order mismatches, Specials/OVA numbering issues, BD rip audits, or TVDB/TMDB/AniDB source reconciliation.
 ---
 
 # fix-my-show
@@ -16,6 +16,17 @@ description: Use when media libraries have wrong, missing, mixed-language, misma
 **不是**：通用文件管理器；批量重命名工具；TMM/Plex 替代品（是和它们协作的修复工具）。
 
 **不适用**：从头搭建新库（TMM/Plex 内置刮削器更合适）；纯文件批量重命名（用 SubRenamer/Advanced Renamer）；网络翻墙/VPN 问题导致刮削失败的。
+
+## Start Here
+
+| 用户请求 | 立即动作 | 禁止事项 |
+|---|---|---|
+| 只给路径或“帮我看看” | 先问要做结构审计(A)、元数据修复(B)，还是二者都做 | 不猜目标语言、源优先级、交付方式 |
+| 文件没扫进 Plex/tMM、集数不全、Specials/OVA 错位 | 走 Workflow A：scan → 两个在线源 → 缺口报告 → 用户审批修复表 | 审批前不移动/重命名/删除 |
+| NFO 标题/简介语言不对、缺简介、要中日双语/中文化 | 走 Workflow B：scan → 源结构判断 → 映射 CSV → 审核/术语表 → 写入 → 验证 | 审核前不写最终 NFO |
+| 用户给了手工修正 | 先落到 CSV/JSON/术语表，再继续 | 不把聊天里的临时修正直接写入 NFO |
+
+每次开始都先声明当前工作流、需要的用户选择、会产出的文件。若在线源不可访问，停下来让用户提供 TVDB/TMDB/AniDB/tMM 导出数据。
 
 ## Hard Rules
 
@@ -38,6 +49,7 @@ description: Use when media libraries have wrong, missing, mixed-language, misma
 | M4 | 写 NFO 前先备份已有 .nfo（排除之前的备份目录） |
 | M5 | 写 NFO 后 XML 解析验证并统计根标签数 |
 | M6 | 修正数据必须持久化到文件（CSV/JSON/替换表），确保可重跑 |
+| M7 | 在线源数据必须记录 `source_name`、`source_url`、`fetched_at`；不能凭记忆填集数、标题、简介 |
 
 ### Agent 行为约束
 
@@ -50,6 +62,7 @@ description: Use when media libraries have wrong, missing, mixed-language, misma
 | C4 | 源标题与生成标题分别记录，不覆盖原始数据 |
 | C5 | 翻译后全文扫描替换表，确认无残留罗马字名 |
 | C6 | 编辑已有 NFO 时只改内容字段（title/plot/outline），不删除、不重写 `<uniqueid>` `<thumb>` `<actor>` `<fileinfo>` |
+| C7 | TVDB/TMDB/AniDB/wiki 查不到或源之间冲突无法解释时，输出差异表并请求用户选择，不继续自动写入 |
 
 ## Workflow A：结构审计与重组
 
@@ -288,6 +301,8 @@ TMM/Plex 已生成 NFO 但内容是错误语言的场景。**只替换内容字�
 ## Scripts（自动化执行）
 
 每个脚本均有 `--help` 级参数文档（`Get-Help .\script.ps1`），SKILL.md 只写触发时机和一行调用。详细用法见脚本文件头注释。
+
+维护脚本时保持 `.ps1` 源码为 **UTF-8 with BOM**，否则 Windows PowerShell 5.1 会把中文注释/字符串按 ANSI 解码并可能解析失败。生成的 NFO 文件仍由脚本写成 UTF-8 无 BOM。
 
 | 脚本 | 覆盖 | 触发时机 | 一行调用 |
 |------|------|---------|---------|

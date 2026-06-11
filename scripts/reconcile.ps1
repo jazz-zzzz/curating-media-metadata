@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     本地文件 vs 在线源对账引擎。
     覆盖 fix-my-show 工作流 A3。
@@ -60,7 +60,11 @@ if (-not (Test-Path -LiteralPath $SourceCsv)) {
 }
 
 $scan = Get-Content -LiteralPath $ScanJson -Encoding UTF8 | ConvertFrom-Json
-$source = Import-Csv -LiteralPath $SourceCsv -Encoding UTF8
+$source = @(Import-Csv -LiteralPath $SourceCsv -Encoding UTF8)
+if ($source.Count -eq 0) {
+    Write-Error "源 CSV 为空: $SourceCsv"
+    exit 1
+}
 
 # 验证源 CSV 列
 $srcCols = $source[0].PSObject.Properties.Name

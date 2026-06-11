@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     按 CSV 修复计划执行文件重命名/移动。
     覆盖 fix-my-show 工作流 A4 执行阶段。
@@ -158,7 +158,11 @@ if (-not (Test-Path -LiteralPath $RootPath)) {
 }
 
 # 读取计划
-$plan = Import-Csv -LiteralPath $PlanPath -Encoding UTF8
+$plan = @(Import-Csv -LiteralPath $PlanPath -Encoding UTF8)
+if ($plan.Count -eq 0) {
+    Write-Error "计划 CSV 为空: $PlanPath"
+    exit 1
+}
 
 # 验证必要列
 $requiredCols = @('old_path','new_path','action')
@@ -239,7 +243,7 @@ Write-Host "校验通过：$($operations.Count) 个操作就绪。"
 
 if ($DryRun) {
     Write-Host "`n=== DRY RUN（预览） ==="
-    $countByAction = $operations | Group-Object action
+    $countByAction = $operations | Group-Object { $_.action }
     foreach ($g in $countByAction) {
         Write-Host "  $($g.Name): $($g.Count)"
     }
@@ -259,7 +263,7 @@ if ($DryRun) {
 
 if (-not $Force) {
     Write-Host "`n即将执行 $($operations.Count) 个操作："
-    $countByAction = $operations | Group-Object action
+    $countByAction = $operations | Group-Object { $_.action }
     foreach ($g in $countByAction) { Write-Host "  $($g.Name): $($g.Count)" }
     $confirm = Read-Host "`n确认执行？(y/N)"
     if ($confirm -ne 'y') { Write-Host "已取消"; exit 0 }
