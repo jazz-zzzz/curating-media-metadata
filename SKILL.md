@@ -67,7 +67,7 @@ description: Use when media libraries have wrong, missing, mixed-language, misma
 
 ### A1. 扫描全量文件
 
-递归列出所有视频文件（.mp4/.mkv/.avi 等），从文件名解析 S/E 编号。同时列出已有 NFO、字幕文件、BD 原盘目录等。
+递归列出所有视频文件（.mp4/.mkv/.avi 等），从文件名解析 S/E 编号。同时列出已有 NFO、字幕文件、BD 原盘目录等。可用 `scripts/scan.ps1 -RootPath ... -OutputPath scan.json` 自动扫描输出结构化 JSON。
 
 ### A2. 拉取在线源集数列表
 
@@ -86,7 +86,7 @@ description: Use when media libraries have wrong, missing, mixed-language, misma
 | 命名异常 | 文件扩展名截断、非标准前缀、路径过长 |
 | 目录名异常 | Specials 目录名含误导性标签；父目录名含误导性季号/年份（如 `ShowName.S01.2024...` 中的 `S01` 会让 Plex 误判） |
 
-输出 **缺口报告**：缺失集、多余文件、需修复项，逐条标注原因和建议操作。
+输出 **缺口报告**：缺失集、多余文件、需修复项，逐条标注原因和建议操作。可结合 `scripts/reconcile.ps1` 输入 scan.json + 源 CSV 自动生成缺口 JSON。
 
 ### A4. 出修复方案，用户审批后执行
 
@@ -96,7 +96,9 @@ description: Use when media libraries have wrong, missing, mixed-language, misma
 |------|------|---------|------|
 | `S03/第07話...mp4.mp` | 扩展名截断 | 重命名为 `S03E07.mp4` | ⬜ |
 
-用户审批后，执行文件重命名/移动（有 H1 豁免）。修复后建议用户跑 tmm 重扫。
+用户审批后，将上表转为 CSV（列：`old_path,new_path,action`），用 `scripts/apply-fix.ps1 -PlanPath fix.csv -RootPath ...` 执行。脚本自动校验、备份日志、执行、验证。支持 `-DryRun` 预览和 `-RollbackLogPath` 回滚。
+
+修复后建议用户跑 tmm 重扫。
 
 ---
 
@@ -106,7 +108,7 @@ description: Use when media libraries have wrong, missing, mixed-language, misma
 
 ### B1. 扫描目录结构（同 A1）
 
-遍历目标文件夹，列出所有媒体文件（按季/集分组）、已有 .nfo、字幕文件。从实际文件名推断解析规则（不是从在线数据库反推）。输出文件清单 + 解析出的季/集映射。
+遍历目标文件夹，列出所有媒体文件（按季/集分组）、已有 .nfo、字幕文件。从实际文件名推断解析规则（不是从在线数据库反推）。输出文件清单 + 解析出的季/集映射。（同 A1，可用 `scripts/scan.ps1`）
 
 ### B2. 确定元数据结构（Agent 密集）
 
@@ -142,7 +144,7 @@ description: Use when media libraries have wrong, missing, mixed-language, misma
 ### B4. 生成审核产物
 
 - **CSV**：步 B3 所有映射字段，一行一条。
-- **HTML 审核页**：`needs_review=true` 时必生成。提供搜索/筛选、本地 vs 源对比、修正字段可记录、导出 CSV/JSON。行 ID 使用 `season+episode+local_path`。
+- **HTML 审核页**：`needs_review=true` 时必生成。提供搜索/筛选、本地 vs 源对比、修正字段可记录、导出 CSV/JSON。行 ID 使用 `season+episode+local_path`。可用 `scripts/review-html.ps1 -MappingCsv preprocess.csv -OutputPath review.html` 生成。
 
 ### B5. 建立术语表（翻译前必做）
 
@@ -179,12 +181,16 @@ TMM/Plex 已生成 NFO 但内容是错误语言的场景。**只替换内容字�
 
 两种模式都必须遵循 M4（备份）、M5（XML 验证）。
 
+**脚本化**：`scripts/write-nfo.ps1` 覆盖模式 A 和 B。模式 A：`-Mode edit -MappingCsv mapping.csv`。模式 B：`-Mode generate -MappingCsv mapping.csv -ShowTitle "..." -TvdbId "..."`。自动备份、XML 验证、UTF-8 无 BOM。
+
 ### B8. 验证
 
 - 逐个 XML 解析，统计 `<tvshow>` / `<episodedetails>` / `<season>` 数量
 - 确认媒体文件数量未变
 - 抽查指定集数和已知问题集
 - 对比文件头和时间戳判断最后改写工具
+
+可用 `scripts/verify.ps1 -RootPath ... -ScanJson scan.json -Strict` 自动验证。
 
 ### B9. 交付
 
@@ -278,3 +284,16 @@ TMM/Plex 已生成 NFO 但内容是错误语言的场景。**只替换内容字�
 | `references/source-matching.md` | 步 B2/B3 — 匹配算法、`match_method` 定义、多源对比 |
 | `references/user-correction-format.md` | 步 B4/B5 — CSV 覆盖表格式、JSON 替换表、审核页导出 |
 | `references/plex-api.md` | 步 B9 方式 B — Plex Token 获取、端点、field locking、完整脚本模板 |
+
+## Scripts（自动化执行）
+
+每个脚本均有 `--help` 级参数文档（`Get-Help .\script.ps1`），SKILL.md 只写触发时机和一行调用。详细用法见脚本文件头注释。
+
+| 脚本 | 覆盖 | 触发时机 | 一行调用 |
+|------|------|---------|---------|
+| `scripts/scan.ps1` | A1, B1 | 任何工作流第一步 | `.\scan.ps1 -RootPath "..." -OutputPath scan.json` |
+| `scripts/reconcile.ps1` | A3 | scan.json 就绪 + 拉取到源 CSV 后 | `.\reconcile.ps1 -ScanJson scan.json -SourceCsv tvdb_s01.csv -SourceName TVDB` |
+| `scripts/apply-fix.ps1` | A4 | 用户审批修复表格后 | `.\apply-fix.ps1 -PlanPath fix.csv -RootPath "..."` （先 `-DryRun` 预览） |
+| `scripts/review-html.ps1` | B4 | B3 映射 CSV 就绪后 | `.\review-html.ps1 -MappingCsv preprocess.csv -OutputPath review.html` |
+| `scripts/write-nfo.ps1` | B7 | B6 元数据生成完毕 | `.\write-nfo.ps1 -Mode edit\|generate -MappingCsv final.csv -RootPath "..."` |
+| `scripts/verify.ps1` | B8 | NFO 写入后 | `.\verify.ps1 -RootPath "..." -ScanJson scan.json -Strict` |
